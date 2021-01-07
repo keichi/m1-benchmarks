@@ -8,50 +8,113 @@
 import Foundation
 import Metal
 
-let ARRAY_LEN = 1024 * 1024 * 100
+class Stream {
+    let ARRAY_LEN = 64 * 1024 * 1024
+    let THREADGROUP_SIZE = 256
+    let NUM_THREADGROUPS = 1024
+    let NUM_ITER = 100
 
-let device = MTLCreateSystemDefaultDevice()!
-let queue = device.makeCommandQueue()!
-let library = device.makeDefaultLibrary()!
-let function = library.makeFunction(name: "add_arrays")!
-let pipelineState = try device.makeComputePipelineState(function: function)
-let functionPSO = try device.makeComputePipelineState(function: function)
+    var device: MTLDevice
+    var queue: MTLCommandQueue
+    var library: MTLLibrary
 
-let commandBuffer = queue.makeCommandBuffer()!
-let commandEncoder = commandBuffer.makeComputeCommandEncoder()!
+    let bufferA: MTLBuffer
+    let bufferB: MTLBuffer
+    let bufferC: MTLBuffer
 
-let bufferA = device.makeBuffer(length: ARRAY_LEN * MemoryLayout<Float>.stride,
-                                options: .storageModeShared)
-let bufferB = device.makeBuffer(length: ARRAY_LEN * MemoryLayout<Float>.stride,
-                                options: .storageModeShared)
-let bufferC = device.makeBuffer(length: ARRAY_LEN * MemoryLayout<Float>.stride,
-                                options: .storageModeShared)
+    init() {
+        self.device = MTLCreateSystemDefaultDevice()!
+        self.queue = device.makeCommandQueue()!
+        self.library = device.makeDefaultLibrary()!
 
-let ptrA = UnsafeMutablePointer<Float>(OpaquePointer(bufferA?.contents()))!
-let ptrB = UnsafeMutablePointer<Float>(OpaquePointer(bufferB?.contents()))!
-let ptrC = UnsafeMutablePointer<Float>(OpaquePointer(bufferC?.contents()))!
+        self.bufferA = device.makeBuffer(length: ARRAY_LEN * MemoryLayout<Float>.stride,
+                                          options: .storageModeShared)!
+        self.bufferB = device.makeBuffer(length: ARRAY_LEN * MemoryLayout<Float>.stride,
+                                          options: .storageModeShared)!
+        self.bufferC = device.makeBuffer(length: ARRAY_LEN * MemoryLayout<Float>.stride,
+                                          options: .storageModeShared)!
+    }
 
-for i in 0..<ARRAY_LEN {
-    ptrA[i] = 1.0
-    ptrB[i] = 2.0
-    ptrC[i] = 0.0
+    func runKernel(kernel: String, gridSize: Int, tbSize: Int) -> Double {
+        let commandBuffer = queue.makeCommandBuffer()!
+        let commandEncoder = commandBuffer.makeComputeCommandEncoder()!
+
+        let function = library.makeFunction(name: kernel)
+        let functionPSO = try! device.makeComputePipelineState(function: function!)
+
+        commandEncoder.setComputePipelineState(functionPSO)
+        commandEncoder.setBuffer(bufferA, offset: 0, index: 0)
+        commandEncoder.setBuffer(bufferB, offset: 0, index: 1)
+        commandEncoder.setBuffer(bufferC, offset: 0, index: 2)
+
+        let gridSize = MTLSizeMake(gridSize, 1, 1)
+        let threadGroupSize = MTLSizeMake(tbSize, 1, 1)
+
+        commandEncoder.dispatchThreads(gridSize, threadsPerThreadgroup: threadGroupSize)
+        commandEncoder.endEncoding()
+
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+
+        return commandBuffer.gpuEndTime - commandBuffer.gpuStartTime
+    }
+
+    func benchmarkKernel(kernel: String, gridSize: Int, tbSize: Int, multiplier: Int) {
+        var timings: [Double] = []
+
+        for _ in 1...NUM_ITER {
+            let runtime = self.runKernel(kernel: kernel, gridSize: gridSize, tbSize: tbSize)
+            timings.append(runtime)
+        }
+
+        let min_runtime = timings.min()!
+        let max_runtime = timings.max()!
+        let avg_runtime = timings.reduce(0.0, +) / Double(timings.count)
+        let bw = Double(ARRAY_LEN * MemoryLayout<Float>.stride * multiplier) / min_runtime / 1e6
+
+        let row = [
+            kernel,
+            String(NUM_ITER),
+            String(ARRAY_LEN),
+            String(MemoryLayout<Float>.stride),
+            String(bw),
+            String(min_runtime),
+            String(max_runtime),
+            String(avg_runtime)
+        ]
+
+        print(row.joined(separator: ","))
+    }
+
+    func run() {
+        let header = [
+            "function",
+            "num_times",
+            "n_elements",
+            "sizeof",
+            "max_mbytes_per_sec",
+            "min_runtime",
+            "max_runtime",
+            "avg_runtime"
+        ]
+
+        print(header.joined(separator: ","))
+
+        let _ = runKernel(kernel: "Init", gridSize: ARRAY_LEN, tbSize: THREADGROUP_SIZE)
+
+        benchmarkKernel(kernel: "Copy", gridSize: ARRAY_LEN, tbSize: THREADGROUP_SIZE,
+                        multiplier: 2)
+        benchmarkKernel(kernel: "Mul", gridSize: ARRAY_LEN, tbSize: THREADGROUP_SIZE,
+                        multiplier: 2)
+        benchmarkKernel(kernel: "Add", gridSize: ARRAY_LEN, tbSize: THREADGROUP_SIZE,
+                        multiplier: 3)
+        benchmarkKernel(kernel: "Triad", gridSize: ARRAY_LEN, tbSize: THREADGROUP_SIZE,
+                        multiplier: 3)
+        benchmarkKernel(kernel: "Dot", gridSize: NUM_THREADGROUPS * THREADGROUP_SIZE,
+                        tbSize: THREADGROUP_SIZE, multiplier: 2)
+    }
 }
 
-commandEncoder.setComputePipelineState(functionPSO)
-commandEncoder.setBuffer(bufferA, offset: 0, index: 0)
-commandEncoder.setBuffer(bufferB, offset: 0, index: 1)
-commandEncoder.setBuffer(bufferC, offset: 0, index: 2)
 
-let gridSize = MTLSizeMake(ARRAY_LEN, 1, 1)
-let threadsPerGroup = min(functionPSO.maxTotalThreadsPerThreadgroup, ARRAY_LEN)
-let threadGroupSize = MTLSizeMake(threadsPerGroup, 1, 1);
-commandEncoder.dispatchThreads(gridSize, threadsPerThreadgroup: threadGroupSize)
-
-commandEncoder.endEncoding()
-commandBuffer.commit()
-commandBuffer.waitUntilCompleted()
-
-let runtime = commandBuffer.gpuEndTime - commandBuffer.gpuStartTime
-let bw = Double(ARRAY_LEN * MemoryLayout<Float>.stride * 3) / runtime / 1e9
-
-print("Bandwidth: \(bw) GB/s")
+let stream = Stream()
+stream.run()

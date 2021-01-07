@@ -1,0 +1,22 @@
+set terminal pngcairo
+set output "stream.png"
+
+set title "STREAM Performance on Apple M1"
+set auto x
+set ylabel "MB/s"
+set yrange [0.0:*]
+set style data histogram
+set style histogram cluster gap 1
+set key box
+set datafile separator ","
+
+set style line 1 lt 1 lc rgb "#4e79a7"
+set style line 2 lt 1 lc rgb "#f28e2c"
+set style fill solid
+
+# plot "metal.csv" every ::1 using 5:xtic(1) title col
+plot "openmp4.csv" every ::1::4 using 5:xtic(1) title "OpenMP (4 threads)" lc rgb "#4e79a7", \
+     "openmp8.csv" every ::1::4 using 5:xtic(1) title "OpenMP (8 threads)" lc rgb "#76b7b2", \
+     "metal.csv" every ::1::4 using 5:xtic(1) title "Metal" lc rgb "#f28e2c"
+
+unset output
