@@ -1,7 +1,7 @@
 set terminal pngcairo
 set output "stream.png"
 
-set title "STREAM Performance on Apple M1"
+set title "STREAM Performance on Apple M1 Max"
 set auto x
 set ylabel "GB/s"
 set yrange [0.0:*]
