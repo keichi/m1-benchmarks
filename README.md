@@ -1,7 +1,17 @@
 # M1 benchmarks
 
-## GEMM
-![](gemm/result/gemm.png)
+## M1 Max
 
-## STREAM
-![](stream/result/stream.png)
+### GEMM
+![](gemm/result_m1max/gemm.png)
+
+### STREAM
+![](stream/result_m1max/stream.png)
+
+## M1
+
+### GEMM
+![](gemm/result_m1/gemm.png)
+
+### STREAM
+![](stream/result_m1/stream.png)
